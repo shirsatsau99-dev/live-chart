@@ -1,34 +1,40 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { WebSocketServer } = require('ws');
 
 const KEY = process.env.TRADER_KEY || 'change-me'; // tumcha secret password
 const PORT = process.env.PORT || 3000;
 
 // Server fakt drawings + symbol + timeframe sambhalto. Strategy/indicators kadhich yet nahit.
-let state = { symbol: 'BTCUSDT', interval: '5m', drawings: [] };
+let state = { symbol: 'BTCUSDT', interval: '5m', drawings: [], v: 0 };
 
 const server = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://x');
+
+  if (u.pathname === '/state' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify(state));
+  }
+
+  if (u.pathname === '/state' && req.method === 'POST') {
+    if (u.searchParams.get('key') !== KEY) { res.writeHead(403); return res.end('forbidden'); }
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 1e6) req.destroy(); });
+    req.on('end', () => {
+      try {
+        const s = JSON.parse(body);
+        state = { symbol: s.symbol, interval: s.interval, drawings: s.drawings || [], v: state.v + 1 };
+        res.writeHead(200); res.end('ok');
+      } catch { res.writeHead(400); res.end('bad'); }
+    });
+    return;
+  }
+
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   fs.createReadStream(path.join(__dirname, 'public', 'index.html')).pipe(res);
 });
 
-const wss = new WebSocketServer({ server });
-
-wss.on('connection', (ws, req) => {
-  const isTrader = new URL(req.url, 'http://x').searchParams.get('key') === KEY;
-  ws.send(JSON.stringify(state));
-  ws.on('message', (msg) => {
-    if (!isTrader) return; // viewers kahi pathvu shakat nahit
-    try { state = JSON.parse(msg); } catch { return; }
-    wss.clients.forEach((c) => {
-      if (c !== ws && c.readyState === 1) c.send(JSON.stringify(state));
-    });
-  });
-});
-
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Viewer : http://localhost:${PORT}`);
   console.log(`Trader : http://localhost:${PORT}/?key=${KEY}`);
 });
